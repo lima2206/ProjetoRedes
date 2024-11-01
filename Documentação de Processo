@@ -1,0 +1,240 @@
+Iniciar os ambientes:
+- Crie 5 instâncias ec2 na aws.
+	- Ubuntu
+	- Habilitar tráfego HTTP e SSH
+
+Nomeie cada uma:
+	- Frontend
+	- Database
+	- Server #1
+	- Server #2
+	- Server #3
+	
+Crie 5 Ips elásticos e associe a cada máquina.
+	
+Opcional:
+	- Entre em cada instância e crie um usuário com o nome dela (para melhor claridade).
+------------------------------------------------------------------------------
+
+* Configurar instância Database:
+	- Atualize o grupo de segurança para liberar a entrada na porta 3306 (Padrão mysql) com o ip das máquinas do backend
+	- entre no terminal da instância
+	* Instalar o docker e compose
+			sudo apt install docker.io -y
+			sudo apt install docker-compose -y
+	* Crie o docker-compose:
+			sudo vim docker-compose.yml
+			
+			'''
+			version: '3.8'
+			
+			services:
+				mysql:
+					image: mysql:8.0-oracle
+					container_name: Mysql
+					environment:  # Váriaveis de ambiente mysql
+						MYSQL_ROOT_PASSWORD: "root"
+						MYSQL_USER: "Syatt"
+						MYSQL_PASSWORD: "Senha132#"
+						MYSQL_DATABASE: "api"
+					ports:
+						- "3306:3306"  # Porta do host e porta do container
+					volumes:
+						- mysql_data:/var/lib/mysql # Garante que os dados sejam persistentes
+
+			volumes:
+				mysql_data: 
+			'''
+			
+	* Docker-compose:
+		sudo docker-compose up -d
+		
+----------------------------------------------------------------------
+
+* Configurar instâncias Server:
+	- Atualizar o grupo de segurança para liberar:
+		*saída* na porta 3306 com ip da instância Database
+		*entrada* na porta 5000 com ip da instância Frontend (Porta usada no backend) 
+	
+	* fazer isso para cada instância server
+	- entrar na instância
+	- instale o git
+		sudo apt-get update
+		sudo apt-get install git -y
+	- verifique se foi instalado corretamente
+		git --version
+	- clone o repositório do Projeto
+		git clone https://github.com/lima2206/ProjetoRedes.git
+		cd ProjetoRedes/
+		git submodule init Backend-Synergy/
+		git submodule update --remote Backend-Synergy/
+	
+	- Configure o .env no projeto
+		cd Backend-Synergy/nestjs/
+		sudo vim .env
+		
+		'''
+		DB_HOST=000.000.000.00 #Ip da instância Database
+  	DB_PORT=3306           # Porta do banco de dados
+  	DB_USERNAME=exemplo       # Usuario do banco de dados
+  	DB_PASSWORD=exemplo132#    # Senha do usuario escolhido
+		'''
+		
+DB_HOST=3.212.193.224  #Ip da instância Database
+DB_PORT=3306           # Porta do banco de dados
+DB_USERNAME=root       # Usuario do banco de dados
+DB_PASSWORD=root  		 # Senha do usuario escolhido 
+		
+	- Instale o Docker
+		sudo apt install docker.io -y
+	
+	- Adicione o usuário ao grupo Docker e reinicar a máquina
+		sudo usermod -aG docker $USER
+  	sudo reboot
+  
+  	
+  - Modifique o Dockerfile e construir e construir a imagem
+  	cd ProjetoRedes/Backend-Synergy/
+  	sudo vim Dockerfile
+  	
+  - adicione no final do arquivo
+  	CMD ["npm", "run", "start:dev"]
+  
+	- contrua a imagem
+		docker build -t backend .
+		
+	- execute o container Docker
+		docker run -p 5000:5000 backend (adicione -d para rodar no background, na primeira vez não recomendo para garantir que tudo iniciou corretamente)
+		
+	- teste a rota
+		libere no grupo de segurança temporariamente para todos os IPs acessarem a porta 5000
+		http://ip_do_servidor:5000
+		
+		deve aparecer isso:
+		{"message":"Unauthorized","statusCode":401}
+		
+	- Repita para todos os servidores
+		
+
+--------------------------------------------------------------------------------------------
+
+* Configurar instância Frontend:
+	
+	# Front:
+		- instale o git
+		  sudo apt-get update
+  		sudo apt-get install git -y
+  	
+  	-instale o npm
+  		sudo apt install nodejs npm -y
+  		
+  	- clone o repositório do Projeto
+			git clone https://github.com/lima2206/ProjetoRedes.git
+			cd ProjetoRedes/
+			git submodule init Frontend-Synergy/
+			git submodule update --remote Frontend-Synergy/
+			
+			- Configure o .env no projeto
+			cd Frontend-Synergy/
+			sudo vim .env
+			
+			'''
+			NEXTAUTH_SECRET=@teste2000
+  		BACKEND_URL=http://ip_backend:port(docker)    # http://backend:5000 Docker users  # local: http://localhost:5000 # http://ip_backend:port
+
+			'''
+			- Instale as dependências
+				npm install
+				
+			- Builde (abrasileirado feio) a aplicação
+				Se a máquina não tiver muita memória disponível:
+  		  	export NODE_OPTIONS="--max-old-space-size=512"
+  			
+  			npm run build
+
+			- inicie a aplicação
+				npm start
+
+===========
+
+	# Load Balancer: (nginx)
+		- instale o nginx
+			sudo apt install nginx
+			
+		- configure o load balancer
+			sudo vim /etc/nginx/conf.d/load_balancer.conf
+			
+			'''
+			 upstream backend {
+          server 000.000.000.01:5000;  # IP do servidor backend
+          server 000.000.000.02:5000;  # IP do servidor backend
+          server 000.000.000.03:5000;  # IP do servidor backend
+				}
+				
+				server {
+						    listen 8000;  # Porta que o load balancer irá escutar
+				
+						    location / {
+						            proxy_pass http://backend;  # Redireciona requisições para os servidores backend
+						    }
+				}
+				'''
+			
+		- teste as configurações
+				sudo nginx -t
+				
+		- reinice o nginx e aplique as configurações
+				sudo ngnix -s reload
+						
+===========
+
+	# Proxy Reverso: (nginx)
+		- Crie o arquivo de configuração do proxy reverso:
+			sudo vim /etc/nginx/sites-available/reverse_proxy.conf
+		 
+			'''
+			server {
+					listen 80; # porta HTTP padrão
+					server_name ip_frontend;
+		
+		
+				location / {
+		    	proxy_pass http://ip_frontend:3000;
+		      proxy_set_header Host $host;
+		      proxy_set_header X-Real-IP $remote_addr;
+		      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+		
+		      proxy_connect_timeout 5s;
+		      proxy_send_timeout 10s;     
+		      proxy_read_timeout 10s;     
+		      proxy_next_upstream error timeout http_502 http_503 http_504;
+		    }
+		
+		    location /api/ { # Necessário para uma rota de login específica da aplicação Synergy
+		      proxy_pass http://ip_frontend:3000;  # Redireciona para o servidor Next.js em execução na porta 3000
+		      proxy_set_header Host $host;
+		      proxy_set_header X-Real-IP $remote_addr;
+		      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+		    }
+		
+		    location /synergy/ {
+		      proxy_pass http://ip_loadbalancer:8000/; # nesse caso é a instancia do front
+		    }
+			}
+			'''
+		
+		- Crie um link do arquivo de configuração para o arquivo em uso
+			sudo ln -s /etc/nginx/sites-available/reverse_proxy.conf /etc/nginx/sites-enabled/
+		
+		- teste as configurações
+			sudo nginx -t
+				
+		- reinice o nginx e aplique as configurações
+			sudo ngnix -s reload
+		
+		
+		
+		
+		
+
+
